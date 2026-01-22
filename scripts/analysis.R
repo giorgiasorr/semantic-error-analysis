@@ -8,6 +8,9 @@
 
 
 library(tidyverse)
+library(binom)
+library(ggplot2)
+
 moses <- read.csv("data/synthetic_moses.csv")
 head(moses)
 #View(moses)
@@ -53,6 +56,40 @@ moses_clean |> #Computing descriptive statistics summary of response times for e
             SD.RT = sd(RESPONSE_TIME),
             MIN.RT = min(RESPONSE_TIME),
             MAX.RT = max(RESPONSE_TIME)) 
+
+###Statistical Analyses###
+
+#Confidence intervals for accuracy per condition
+accuracy_summary <- moses_clean |>
+  group_by(CONDITION) |>
+  summarise(correct = sum(ACCURATE == "correct"),
+            total = n(),
+            .groups = "drop") |>
+  mutate(prop = correct / total)
+
+ci <- binom.confint(x = accuracy_summary$correct, #Computing 95% Wilson confidence intervals for binomial proportions
+                    n = accuracy_summary$total,
+                    method = "wilson")
+
+accuracy_summary$lower <- ci$lower
+accuracy_summary$upper <- ci$upper
+
+accuracy_summary
+##CONDITION            95% CI
+#1 Bad control      [0.74, 0.81]
+#2 Illusion         [0.19, 0.25]
+#3 Well-formed c.   [0.61, 0.69]      
+#4 Well-formed q.   [0.61, 0.70]
+
+#Chi-square test for Accuracy x Condition
+table_acc <- table(moses_clean$CONDITION, moses_clean$ACCURATE)
+chisq.test(table_acc) #Checking if accuracy differs by condition
+#X-squared = 431.12, df = 6, p-value < 2.2e-16
+
+#Logistic regression: prediction correct vs incorrect
+moses_clean$CORRECT_BIN <- ifelse(moses_clean$ACCURATE == "correct", 1, 0)
+glm_acc <- glm(CORRECT_BIN ~ CONDITION, data = moses_clean, family = binomial)
+summary(glm_acc)
 
 ###Plots###
 
@@ -121,3 +158,41 @@ moses_clean |> ##Quick verification of synthetic percentages
 #2 Bad control      4426
 #3 Illusion         4455
 #4 Well-formed c.   5261
+
+#Plot 3 shows accuracy proportions with 95% confidence intervals
+p3 <- ggplot(accuracy_summary, aes(x= CONDITION, y = prop)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2) +
+  labs( y = "Proportion of correct responses",
+        x = "Condition")
+
+ggsave(filename = "plots/prop_correct.png",
+       plot = p3,
+       width = 6,
+       height = 4,
+       dpi = 300)
+
+#Plot 4 shows Chi-square visualization of accuracy by condition
+accuracy_table <- moses_clean |>
+  group_by(CONDITION, ACCURATE) |>
+  summarise(N = n(), .groups = "drop") |>
+  group_by(CONDITION) |>
+  mutate(PERC = 100 * N / sum(N)) |>
+  ungroup()|>
+  mutate(CONDITION = recode(CONDITION,
+                            "Well-formed control" = "Well-formed c.",
+                            "Well-formed question" = "Well-formed q."))
+
+p4 <- ggplot(accuracy_table, aes(x = CONDITION, y = PERC, fill = ACCURATE)) +
+  geom_col(position = "stack") + 
+  labs(x = "Question type", y = "Percentage of responses", fill = "Response type") +
+  theme_classic() +
+  scale_fill_manual(values = c("correct" = "seagreen3",
+                               "incorrect" = "tomato",
+                               "dont_know" = "gold"))
+
+ggsave(filename = "plots/acc_by_condition.png",
+       plot = p4,
+       width = 6,
+       height = 4,
+       dpi = 300)
